@@ -6,29 +6,29 @@
 ILOSTLBEGIN
 
 struct Instance {
-    int K = 0; // liczba produktów
-    int T = 0; // liczba okresów
+    int K = 0; // number of products
+    int T = 0; // number of periods
 
-    std::vector<double> hc;
-    std::vector<double> hcr;
-    std::vector<double> pc;
-    std::vector<double> pcr;
-    std::vector<double> sc;
-    std::vector<double> scr;
+    std::vector<double> hc;   // holding cost serviceables
+    std::vector<double> hcr;  // holding cost recoverables
+    std::vector<double> pc;   // production cost
+    std::vector<double> pcr;  // remanufacturing cost
+    std::vector<double> sc;   // setup cost production
+    std::vector<double> scr;  // setup cost remanufacturing
 
-    std::vector<double> tp;
-    std::vector<double> tpr;
-    std::vector<double> ts;
-    std::vector<double> tsr;
+    std::vector<double> tp;   // time production per unit
+    std::vector<double> tpr;  // time remanufacturing per unit
+    std::vector<double> ts;   // time setup production
+    std::vector<double> tsr;  // time setup remanufacturing
 
-    std::vector<double> ct;   // capacity produkcji
+    std::vector<double> ct;   // capacity production
     std::vector<double> ctr;  // capacity remanufacturing
 
-    std::vector<std::vector<double>> d; // demand
-    std::vector<std::vector<double>> r; // returns
+    std::vector<std::vector<double>> d; // demand per product per period
+    std::vector<std::vector<double>> r; // returns per product per period
 
-    std::vector<double> y0;
-    std::vector<double> yr0;
+    std::vector<double> y0;   // initial serviceable inventory
+    std::vector<double> yr0;  // initial recoverable inventory
 
     bool useValidIneq = true;
 };
@@ -36,7 +36,7 @@ struct Instance {
 Instance buildReferenceInstance() {
     Instance ins;
 
-    // Dane 1-1 z artykulem powinny dac oczekiwany wynik 9620
+    // Data 1-1 from the article should yield expected result 9620
     ins.K = 4;
     ins.T = 5;
 
@@ -87,6 +87,7 @@ std::vector<std::vector<double>> computeBigM(const Instance& ins) {
 
     for (int k = 0; k < ins.K; ++k) {
         for (int t = 0; t < ins.T; ++t) {
+            // Max possible production quantity given available capacity
             // M[k][t] = max(0, max(ct[t] - ts[k], ctr[t] - tsr[k])) / min(tp[k], tpr[k])
             const double numerator = max2(0.0, max2(ins.ct[t] - ins.ts[k], ins.ctr[t] - ins.tsr[k]));
             const double denominator = min2(ins.tp[k], ins.tpr[k]);
@@ -110,6 +111,7 @@ void addValidInequalities(
     const std::vector<std::vector<IloBoolVar>>& gamma,
     const std::vector<std::vector<IloBoolVar>>& gammar) {
 
+    // Ensures enough inventory for demand if no setups
     // (18) Y[k][t] >= sum_{s=t+1}^{t+p} d[k][s] - sum_{s=t+1}^{t+p} M[k][s] * (gamma[k][s] + gammar[k][s])
     for (int k = 0; k < ins.K; ++k) {
         for (int t = 0; t <= ins.T - 2; ++t) {
@@ -126,6 +128,7 @@ void addValidInequalities(
         }
     }
 
+    // Ensures enough stock for returns if no reman setups
     // (19) Yr[k][t] >= sum_{s=t-p}^{t} r[k][s] - sum_{s=t-p}^{t} M[k][s] * gammar[k][s]
     for (int k = 0; k < ins.K; ++k) {
         for (int t = 1; t < ins.T; ++t) {
@@ -151,7 +154,7 @@ int main2() {
         IloModel model(env);
 
         // -----------------------------
-        // Zmienne decyzyjne
+        // Decision variables
         // -----------------------------
         std::vector<std::vector<IloNumVar>> Q(ins.K, std::vector<IloNumVar>(ins.T));
         std::vector<std::vector<IloNumVar>> Qr(ins.K, std::vector<IloNumVar>(ins.T));
@@ -172,7 +175,7 @@ int main2() {
         }
 
         // -----------------------------
-        // Funkcja celu
+        // Objective function
         // -----------------------------
         IloExpr objective(env);
         IloExpr holdingCost(env);
@@ -190,10 +193,10 @@ int main2() {
         model.add(IloMinimize(env, objective));
 
         // -----------------------------
-        // Ograniczenia
+        // Constraints
         // -----------------------------
 
-        // (2) Bilans serviceables
+        // (2) Balance serviceables
         for (int k = 0; k < ins.K; ++k) {
             // t = 0 (czyli okres 1 w notacji artykułu)
             {
@@ -211,7 +214,7 @@ int main2() {
             }
         }
 
-        // (3) Bilans recoverables
+        // (3) Balance recoverables
         for (int k = 0; k < ins.K; ++k) {
             {
                 IloExpr lhs(env);
@@ -227,7 +230,7 @@ int main2() {
             }
         }
 
-        // (4) Capacity produkcyjna
+        // (4) Capacity production
         for (int t = 0; t < ins.T; ++t) {
             IloExpr lhs(env);
             for (int k = 0; k < ins.K; ++k) {
@@ -247,21 +250,21 @@ int main2() {
             lhs.end();
         }
 
-        // (6) Linking dla produkcji
+        // (6) Linking for production
         for (int k = 0; k < ins.K; ++k) {
             for (int t = 0; t < ins.T; ++t) {
                 model.add(Q[k][t] <= M[k][t] * gamma[k][t]);
             }
         }
 
-        // (7) Linking dla remanufacturing
+        // (7) Linking for remanufacturing
         for (int k = 0; k < ins.K; ++k) {
             for (int t = 0; t < ins.T; ++t) {
                 model.add(Qr[k][t] <= M[k][t] * gammar[k][t]);
             }
         }
 
-        // (18)-(19) opcjonalne valid inequalities
+        // (18)-(19) optional valid inequalities
         if (ins.useValidIneq) {
             addValidInequalities(env, model, ins, M, Y, Yr, gamma, gammar);
         }
@@ -284,18 +287,21 @@ int main2() {
         }
 
         // -----------------------------
-        // Raport wyników
+        // Results report
         // -----------------------------
         std::cout << std::fixed << std::setprecision(2) << "\n\n";
-        std::cout << "----------------------------------------------\n";
+        std::cout << "-----------------------------------------------\n";
         std::cout << "Model CLSP-RM-SS (C++, bez harmonogramowania)\n";
-        std::cout << "Status         = " << cplex.getStatus() << "\n";
-        std::cout << "Objective value= " << cplex.getObjValue() << "\n";
-        std::cout << "Holding cost   = " << cplex.getValue(holdingCost) << "\n";
-        std::cout << "Variable cost  = " << cplex.getValue(variableCost) << "\n";
-        std::cout << "Setup cost     = " << cplex.getValue(setupCost) << "\n";
-        std::cout << "----------------------------------------------\n\n";
+        std::cout << "Status          = " << cplex.getStatus() << "\n";
+        std::cout << "Objective value = " << cplex.getObjValue() << "\n";
+        std::cout << "Holding cost    = " << cplex.getValue(holdingCost) << "\n";
+        std::cout << "Variable cost   = " << cplex.getValue(variableCost) << "\n";
+        std::cout << "Setup cost      = " << cplex.getValue(setupCost) << "\n";
+        std::cout << "-----------------------------------------------\n\n";
 
+        // -----------------------------
+        // Output generation for production plan
+        // -----------------------------
         auto printNumMatrix = [&](const std::string& name, const std::vector<std::vector<IloNumVar>>& x) {
             std::cout << name << ":\n";
             for (int k = 0; k < ins.K; ++k) {
@@ -320,6 +326,9 @@ int main2() {
             std::cout << "\n";
             };
 
+        // -----------------------------
+        // Results report
+        // -----------------------------
         printNumMatrix("Q   (production)", Q);
         printNumMatrix("Qr  (remanufacturing)", Qr);
         printNumMatrix("Y   (serviceable inventory)", Y);
@@ -327,6 +336,7 @@ int main2() {
         printBoolMatrix("gamma  (prod setup)", gamma);
         printBoolMatrix("gammar (reman setup)", gammar);
 
+        // Display Big-M - maximum possible production quantity per period (6) (7)
         std::cout << "M values:\n";
         for (int k = 0; k < ins.K; ++k) {
             std::cout << "k=" << (k + 1) << ": ";
@@ -337,6 +347,7 @@ int main2() {
         }
         std::cout << "\n";
 
+        // Capacity usage vs available (4) (5)
         std::cout << "Capacity usage:\n";
         for (int t = 0; t < ins.T; ++t) {
             double prodUsed = 0.0;
@@ -350,11 +361,13 @@ int main2() {
                 << "  rem=" << remUsed << "/" << ins.ctr[t] << "\n";
         }
 
+        // Free CPLEX resources
         objective.end();
         holdingCost.end();
         variableCost.end();
         setupCost.end();
         env.end();
+
         return 0;
     }
     catch (const IloException& e) {
