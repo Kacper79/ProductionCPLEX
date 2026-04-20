@@ -3,23 +3,30 @@
 ILOSTLBEGIN
 
 struct Instance {
-    int K = 0;
-    int T = 0;
+    int K = 0; // number of products
+    int T = 0; // number of periods
 
-    std::vector<double> hc, hcr;
-    std::vector<double> pc, pcr;
-    std::vector<double> sc, scr;
+    std::vector<double> hc;   // holding cost serviceables
+    std::vector<double> hcr;  // holding cost recoverables
+    std::vector<double> pc;   // production cost
+    std::vector<double> pcr;  // remanufacturing cost
+    std::vector<double> sc;   // setup cost production
+    std::vector<double> scr;  // setup cost remanufacturing
 
-    std::vector<double> tp, tpr;
-    std::vector<double> ts, tsr;
+    std::vector<double> tp;   // time production per unit
+    std::vector<double> tpr;  // time remanufacturing per unit
+    std::vector<double> ts;   // time setup production
+    std::vector<double> tsr;  // time setup remanufacturing
 
-    std::vector<double> ct, ctr;
+    std::vector<double> ct;   // capacity production
+    std::vector<double> ctr;  // capacity remanufacturing
 
-    std::vector<std::vector<double>> d;
-    std::vector<std::vector<double>> r;
+    std::vector<std::vector<double>> d; // demand per product per period
+    std::vector<std::vector<double>> r; // returns per product per period
 
-    std::vector<double> y0, yr0;
-    bool useValidIneq = true;
+    std::vector<double> y0;   // initial serviceable inventory
+    std::vector<double> yr0;  // initial recoverable inventory
+    bool useValidIneq = true; // enable valid inequalities
 };
 
 struct Schedule {
@@ -101,6 +108,7 @@ Instance buildReferenceInstance() {
     return ins;
 }
 
+// Maximum possible production quantity given available capacity
 std::vector<std::vector<double>> computeBigM(const Instance& ins) {
     std::vector<std::vector<double>> M(ins.K, std::vector<double>(ins.T, 0.0));
     for (int k = 0; k < ins.K; ++k) {
@@ -116,6 +124,7 @@ std::vector<std::vector<double>> computeBigM(const Instance& ins) {
     return M;
 }
 
+// Dummy schedule with high penalty cost (ensures feasibility)
 Schedule makeDummySchedule(const Instance& ins, int k, double penalty = 1.0e6) {
     Schedule s;
     s.product = k;
@@ -132,7 +141,16 @@ Schedule makeDummySchedule(const Instance& ins, int k, double penalty = 1.0e6) {
     return s;
 }
 
-PricingResult solvePricingSubproblem( const Instance& ins, const std::vector<std::vector<double>>& M, int k, double sigma, const std::vector<double>& piProd, const std::vector<double>& piRem, double rcTolerance = -1e-6) {
+// Solves SLULSP-RM for one product to find improving column
+PricingResult solvePricingSubproblem(
+    const Instance& ins,
+    const std::vector<std::vector<double>>& M,
+    int k,
+    double sigma,
+    const std::vector<double>& piProd,
+    const std::vector<double>& piRem,
+    double rcTolerance = -1e-6) {
+
     IloEnv env;
     PricingResult result;
 
@@ -269,6 +287,7 @@ PricingResult solvePricingSubproblem( const Instance& ins, const std::vector<std
     }
 }
 
+// Solves LP relaxation of master problem (Set Partitioning Problem)
 MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const std::vector<std::vector<Schedule>>& schedulesPool) {
     IloEnv env;
     MasterResult res;
@@ -348,6 +367,7 @@ MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const 
             throw std::runtime_error("Restricted master LP was not solved successfully.");
         }
 
+        // Extract dual variables for pricing
         res.solved = true;
         res.objective = cplex.getObjValue();
         res.sigma.resize(datasetInstance.K, 0.0);
@@ -377,7 +397,12 @@ MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const 
     }
 }
 
-std::vector<std::vector<double>> solveIntegerMasterProblemSPP(const Instance& datasetInstance,const std::vector<std::vector<Schedule>>& schedulesPool, double& objectiveValue) {
+// Solves integer master problem over generated columns (upper bound)
+std::vector<std::vector<double>> solveIntegerMasterProblemSPP(
+    const Instance& datasetInstance,
+    const std::vector<std::vector<Schedule>>& schedulesPool,
+    double& objectiveValue) {
+
     IloEnv env;
 
     try {
@@ -394,6 +419,7 @@ std::vector<std::vector<double>> solveIntegerMasterProblemSPP(const Instance& da
         }
         model.add(IloMinimize(env, objective));
 
+        // Exactly one schedule per product
         for (int k = 0; k < datasetInstance.K; ++k) {
             IloExpr lhs(env);
             for (std::size_t n = 0; n < schedulesPool[k].size(); ++n) lhs += delta[k][n];
@@ -401,6 +427,7 @@ std::vector<std::vector<double>> solveIntegerMasterProblemSPP(const Instance& da
             lhs.end();
         }
 
+        // Capacity constraints
         for (int t = 0; t < datasetInstance.T; ++t) {
             IloExpr lhsProd(env), lhsRem(env);
             for (int k = 0; k < datasetInstance.K; ++k) {
@@ -445,6 +472,7 @@ std::vector<std::vector<double>> solveIntegerMasterProblemSPP(const Instance& da
     }
 }
 
+// Printing schedule details
 void printScheduleBrief(const Schedule& s) {
     std::cout << "  cost=" << s.cost << (s.isDummy ? "  [dummy]" : "") << "\n";
     std::cout << "  Q   : ";
@@ -492,6 +520,7 @@ int main() {
             for (double v : master.piRem) std::cout << std::setw(16) << v;
             std::cout << "\n";
 
+            // Generate new columns for each product
             bool addedAnyColumn = false;
             for (int k = 0; k < ins.K; ++k) {
                 PricingResult pr = solvePricingSubproblem(ins, M, k, master.sigma[k], master.piProd, master.piRem, rcTolerance);
@@ -519,8 +548,10 @@ int main() {
             std::cout << "Reached maxIterations = " << maxIterations << ".\n\n";
         }
 
+        // Lower bound from relaxed master
         std::cout << "Lower bound (from relaxing problem) " << master.objective << "\n\n";
 
+        // Upper bound from integer master
         double integerMasterObj = std::numeric_limits<double>::quiet_NaN();
         auto chosen = solveIntegerMasterProblemSPP(ins, pool, integerMasterObj);
         std::cout << "Upper Bound (from solving master problem over generated columns): " << integerMasterObj << "\n\n";

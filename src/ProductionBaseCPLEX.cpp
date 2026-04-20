@@ -1,4 +1,4 @@
-﻿// ProductionCPLEX.cpp : Defines the entry point for the application.
+﻿// ProductionBaseCPLEX.cpp : Defines the entry point for the application.
 //
 
 #include <ProductionCPLEX.h>
@@ -82,12 +82,12 @@ Instance buildReferenceInstance() {
 double max2(double a, double b) { return (a > b) ? a : b; }
 double min2(double a, double b) { return (a < b) ? a : b; }
 
+// Maximum possible production quantity given available capacity
 std::vector<std::vector<double>> computeBigM(const Instance& ins) {
     std::vector<std::vector<double>> M(ins.K, std::vector<double>(ins.T, 0.0));
 
     for (int k = 0; k < ins.K; ++k) {
         for (int t = 0; t < ins.T; ++t) {
-            // Max possible production quantity given available capacity
             // M[k][t] = max(0, max(ct[t] - ts[k], ctr[t] - tsr[k])) / min(tp[k], tpr[k])
             const double numerator = max2(0.0, max2(ins.ct[t] - ins.ts[k], ins.ctr[t] - ins.tsr[k]));
             const double denominator = min2(ins.tp[k], ins.tpr[k]);
@@ -101,6 +101,7 @@ std::vector<std::vector<double>> computeBigM(const Instance& ins) {
     return M;
 }
 
+// Adds valid inequalities to strengthen LP relaxation
 void addValidInequalities(
     IloEnv env,
     IloModel& model,
@@ -175,7 +176,7 @@ int main2() {
         }
 
         // -----------------------------
-        // Objective function
+        // Objective function (1)
         // -----------------------------
         IloExpr objective(env);
         IloExpr holdingCost(env);
@@ -198,7 +199,7 @@ int main2() {
 
         // (2) Balance serviceables
         for (int k = 0; k < ins.K; ++k) {
-            // t = 0 (czyli okres 1 w notacji artykułu)
+            // t = 0 (i.e. period 1 in article notation)
             {
                 IloExpr lhs(env);
                 lhs += ins.y0[k] + Q[k][0] + Qr[k][0];
@@ -299,9 +300,7 @@ int main2() {
         std::cout << "Setup cost      = " << cplex.getValue(setupCost) << "\n";
         std::cout << "-----------------------------------------------\n\n";
 
-        // -----------------------------
-        // Output generation for production plan
-        // -----------------------------
+        // Helper lambdas for printing results
         auto printNumMatrix = [&](const std::string& name, const std::vector<std::vector<IloNumVar>>& x) {
             std::cout << name << ":\n";
             for (int k = 0; k < ins.K; ++k) {
@@ -326,9 +325,7 @@ int main2() {
             std::cout << "\n";
             };
 
-        // -----------------------------
-        // Results report
-        // -----------------------------
+        // Print decision variables
         printNumMatrix("Q   (production)", Q);
         printNumMatrix("Qr  (remanufacturing)", Qr);
         printNumMatrix("Y   (serviceable inventory)", Y);
