@@ -360,7 +360,7 @@ MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const 
         cplex.setOut(env.getNullStream());
         cplex.setWarning(env.getNullStream());
         cplex.setParam(IloCplex::Param::Threads, 1);
-        cplex.setParam(IloCplex::Param::RootAlgorithm, IloCplex::Primal);
+        //cplex.setParam(IloCplex::Param::RootAlgorithm, IloCplex::Primal);
         //cplex.setParam(IloCplex::Param::LPMethod, IloCplex::Primal);
 
         if (!cplex.solve()) {
