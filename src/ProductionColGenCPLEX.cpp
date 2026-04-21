@@ -304,7 +304,7 @@ MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const 
                 std::ostringstream name;
                 name << "delta_k" << (k + 1) << "_n" << (n + 1);
                 delta[k].push_back(IloNumVar(env, 0.0, 1.0, ILOFLOAT, name.str().c_str()));
-                objective += schedulesPool[k][n].cost * delta[k].back(); // min Z = sum_k sum_n_from_S nc_kn * delta_kn gdzie S to zbior schedules
+                objective += schedulesPool[k][n].cost * delta[k].back(); // min Z = sum_k sum_n_from_S nc_kn * delta_kn
             }
         }
         model.add(IloMinimize(env, objective));
@@ -414,7 +414,7 @@ std::vector<std::vector<double>> solveIntegerMasterProblemSPP(
             delta[k].reserve(static_cast<std::size_t>(schedulesPool[k].size()));
             for (std::size_t n = 0; n < schedulesPool[k].size(); ++n) {
                 delta[k].push_back(IloBoolVar(env));
-                objective += schedulesPool[k][n].cost * delta[k].back(); // min Z = sum_k sum_n_from_S nc_kn * delta_kn gdzie S to zbior schedules
+                objective += schedulesPool[k][n].cost * delta[k].back(); // min Z = sum_k sum_n_from_S nc_kn * delta_kn
             }
         }
         model.add(IloMinimize(env, objective));
