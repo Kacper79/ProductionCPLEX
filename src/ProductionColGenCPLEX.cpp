@@ -185,10 +185,12 @@ PricingResult solvePricingSubproblem(
         IloExpr reducedCostExpr(env);
 
         for (int t = 0; t < ins.T; ++t) {
-            if (t < ins.T - 1) {
+            originalCost += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t];
+            reducedCostExpr += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t];
+            /*if (t < ins.T - 1) {
                 originalCost += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t];
                 reducedCostExpr += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t];
-            }
+            }*/
 
             originalCost +=  ins.pc[k] * Q[t] + ins.pcr[k] * Qr[t]
                 + ins.sc[k] * gamma[t] + ins.scr[k] * gammar[t];
