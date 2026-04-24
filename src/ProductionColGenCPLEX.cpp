@@ -276,14 +276,14 @@ PricingResult solvePricingSubproblem(
             Schedule col;
             col.product = k;
             col.cost = (cplex.getValue(originalCost)); //the original (positive) cost is important while the reduced (negative) cost is being minimized (both are proportional to each other)
-            col.prodCap.assign(ins.T, 0.0);
-            col.remCap.assign(ins.T, 0.0);
-            col.Q.assign(ins.T, 0.0);
-            col.Qr.assign(ins.T, 0.0);
-            col.Y.assign(ins.T, 0.0);
-            col.Yr.assign(ins.T, 0.0);
-            col.gamma.assign(ins.T, 0.0);
-            col.gammar.assign(ins.T, 0.0);
+            col.prodCap.assign(ins.T, 0);
+            col.remCap.assign(ins.T, 0);
+            col.Q.assign(ins.T, 0);
+            col.Qr.assign(ins.T, 0);
+            col.Y.assign(ins.T, 0);
+            col.Yr.assign(ins.T, 0);
+            col.gamma.assign(ins.T, 0);
+            col.gammar.assign(ins.T, 0);
             col.isDummy = false;
 
             for (int t = 0; t < ins.T; ++t) {
