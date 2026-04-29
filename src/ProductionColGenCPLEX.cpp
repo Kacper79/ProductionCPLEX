@@ -8,24 +8,24 @@ struct Instance {
 
     std::vector<double> hc;   // holding cost serviceables
     std::vector<double> hcr;  // holding cost recoverables
-    std::vector<int> pc;   // production cost
-    std::vector<int> pcr;  // remanufacturing cost
-    std::vector<int> sc;   // setup cost production
-    std::vector<int> scr;  // setup cost remanufacturing
+    std::vector<double> pc;   // production cost
+    std::vector<double> pcr;  // remanufacturing cost
+    std::vector<double> sc;   // setup cost production
+    std::vector<double> scr;  // setup cost remanufacturing
 
-    std::vector<int> tp;   // time production per unit
-    std::vector<int> tpr;  // time remanufacturing per unit
-    std::vector<int> ts;   // time setup production
-    std::vector<int> tsr;  // time setup remanufacturing
+    std::vector<double> tp;   // time production per unit
+    std::vector<double> tpr;  // time remanufacturing per unit
+    std::vector<double> ts;   // time setup production
+    std::vector<double> tsr;  // time setup remanufacturing
 
-    std::vector<int> ct;   // capacity production
-    std::vector<int> ctr;  // capacity remanufacturing
+    std::vector<double> ct;   // capacity production
+    std::vector<double> ctr;  // capacity remanufacturing
 
-    std::vector<std::vector<int>> d; // demand per product per period
-    std::vector<std::vector<int>> r; // returns per product per period
+    std::vector<std::vector<double>> d; // demand per product per period
+    std::vector<std::vector<double>> r; // returns per product per period
 
-    std::vector<int> y0;   // initial serviceable inventory
-    std::vector<int> yr0;  // initial recoverable inventory
+    std::vector<double> y0;   // initial serviceable inventory
+    std::vector<double> yr0;  // initial recoverable inventory
     bool useValidIneq = true; // enable valid inequalities
 };
 
@@ -36,11 +36,11 @@ struct Schedule {
     double cost = 0.0;
 
     // capacity consumptions in each period for master constraints
-    std::vector<int> prodCap;
-    std::vector<int> remCap;
+    std::vector<double> prodCap;
+    std::vector<double> remCap;
 
     // detailed plan (kept so this can later be inspected / reused)
-    std::vector<int> Q, Qr, Y, Yr, gamma, gammar;
+    std::vector<double> Q, Qr, Y, Yr, gamma, gammar;
 
     bool isDummy = false;
 };
@@ -109,8 +109,8 @@ Instance buildReferenceInstance() {
 }
 
 // Maximum possible production quantity given available capacity
-std::vector<std::vector<int>> computeBigM(const Instance& ins) {
-    std::vector<std::vector<int>> M(ins.K, std::vector<int>(ins.T, 0));
+std::vector<std::vector<double>> computeBigM(const Instance& ins) {
+    std::vector<std::vector<double>> M(ins.K, std::vector<double>(ins.T, 0.0));
     for (int k = 0; k < ins.K; ++k) {
         for (int t = 0; t < ins.T; ++t) {
             const double numerator = max2(0.0, max2(ins.ct[t] - ins.ts[k], ins.ctr[t] - ins.tsr[k]));
@@ -118,25 +118,25 @@ std::vector<std::vector<int>> computeBigM(const Instance& ins) {
             if (denominator <= 0.0) {
                 throw std::runtime_error("Dont divide by zero in calc M");
             }
-            M[k][t] = std::floor(numerator / denominator);
+            M[k][t] = numerator / denominator;
         }
     }
     return M;
 }
 
 // Dummy schedule with high penalty cost (ensures feasibility)
-Schedule makeDummySchedule(const Instance& ins, int k, int penalty = 1e6) {
+Schedule makeDummySchedule(const Instance& ins, int k, double penalty = 1.0e6) {
     Schedule s;
     s.product = k;
     s.cost = penalty;
-    s.prodCap.assign(ins.T, 0);
-    s.remCap.assign(ins.T, 0);
-    s.Q.assign(ins.T, 0);
-    s.Qr.assign(ins.T, 0);
-    s.Y.assign(ins.T, 0);
-    s.Yr.assign(ins.T, 0);
-    s.gamma.assign(ins.T, 0);
-    s.gammar.assign(ins.T, 0);
+    s.prodCap.assign(ins.T, 0.0);
+    s.remCap.assign(ins.T, 0.0);
+    s.Q.assign(ins.T, 0.0);
+    s.Qr.assign(ins.T, 0.0);
+    s.Y.assign(ins.T, 0.0);
+    s.Yr.assign(ins.T, 0.0);
+    s.gamma.assign(ins.T, 0.0);
+    s.gammar.assign(ins.T, 0.0);
     s.isDummy = true;
     return s;
 }
@@ -144,7 +144,7 @@ Schedule makeDummySchedule(const Instance& ins, int k, int penalty = 1e6) {
 // Solves SLULSP-RM for one product to find improving column
 PricingResult solvePricingSubproblem(
     const Instance& ins,
-    const std::vector<std::vector<int>>& M,
+    const std::vector<std::vector<double>>& M,
     int k,
     double sigma,
     const std::vector<double>& piProd,
@@ -161,22 +161,12 @@ PricingResult solvePricingSubproblem(
         std::vector<IloNumVar> gamma(ins.T), gammar(ins.T);
 
         for (int t = 0; t < ins.T; ++t) {
-            /*Q[t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
+            Q[t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
             Qr[t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
             Y[t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
-            Yr[t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);*/
-            Q[t] = IloNumVar(env, 0.0, IloInfinity);
-            Qr[t] = IloNumVar(env, 0.0, IloInfinity);
-            Y[t] = IloNumVar(env, 0.0, IloInfinity);
-            Yr[t] = IloNumVar(env, 0.0, IloInfinity);
-            /*Q[t] = IloIntVar(env, 0, IloIntMax);
-            Qr[t] = IloIntVar(env, 0, IloIntMax);
-            Y[t] = IloIntVar(env, 0, IloIntMax);
-            Yr[t] = IloIntVar(env, 0, IloIntMax);*/
-            gamma[t] = IloBoolVar(env);
-            gammar[t] = IloBoolVar(env);
-            //gamma[t] = IloNumVar(env, 0.0, 1.0, ILOINT);
-            //gammar[t] = IloNumVar(env, 0.0, 1.0, ILOINT);
+            Yr[t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
+            gamma[t] = IloNumVar(env, 0.0, 1.0, ILOINT);
+            gammar[t] = IloNumVar(env, 0.0, 1.0, ILOINT);
         }
 
         // Reduced-cost objective from the paper:
@@ -185,30 +175,15 @@ PricingResult solvePricingSubproblem(
         IloExpr reducedCostExpr(env);
 
         for (int t = 0; t < ins.T; ++t) {
-            originalCost += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t];
-            reducedCostExpr += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t];
-            /*if (t < ins.T - 1) {
-                originalCost += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t];
-                reducedCostExpr += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t];
-            }*/
-
-            originalCost +=  ins.pc[k] * Q[t] + ins.pcr[k] * Qr[t]
+            originalCost += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t]
+                + ins.pc[k] * Q[t] + ins.pcr[k] * Qr[t]
                 + ins.sc[k] * gamma[t] + ins.scr[k] * gammar[t];
 
-            /*originalCost += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t]
+            reducedCostExpr += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t]
                 + ins.pc[k] * Q[t] + ins.pcr[k] * Qr[t]
-                + ins.sc[k] * gamma[t] + ins.scr[k] * gammar[t];*/
-
-            reducedCostExpr += ins.pc[k] * Q[t] + ins.pcr[k] * Qr[t]
                 + ins.sc[k] * gamma[t] + ins.scr[k] * gammar[t]
                 - piProd[t] * (ins.tp[k] * Q[t] + ins.ts[k] * gamma[t])
                 - piRem[t] * (ins.tpr[k] * Qr[t] + ins.tsr[k] * gammar[t]);
-
-            /*reducedCostExpr += ins.hc[k] * Y[t] + ins.hcr[k] * Yr[t]
-                + ins.pc[k] * Q[t] + ins.pcr[k] * Qr[t]
-                + ins.sc[k] * gamma[t] + ins.scr[k] * gammar[t]
-                - piProd[t] * (ins.tp[k] * Q[t] + ins.ts[k] * gamma[t])
-                - piRem[t] * (ins.tpr[k] * Qr[t] + ins.tsr[k] * gammar[t]);*/
         }
         reducedCostExpr -= sigma;
 
@@ -277,15 +252,15 @@ PricingResult solvePricingSubproblem(
         if (result.improving) {
             Schedule col;
             col.product = k;
-            col.cost = (cplex.getValue(originalCost)); //the original (positive) cost is important while the reduced (negative) cost is being minimized (both are proportional to each other)
-            col.prodCap.assign(ins.T, 0);
-            col.remCap.assign(ins.T, 0);
-            col.Q.assign(ins.T, 0);
-            col.Qr.assign(ins.T, 0);
-            col.Y.assign(ins.T, 0);
-            col.Yr.assign(ins.T, 0);
-            col.gamma.assign(ins.T, 0);
-            col.gammar.assign(ins.T, 0);
+            col.cost = cplex.getValue(originalCost); //the original (positive) cost is important while the reduced (negative) cost is being minimized (both are proportional to each other)
+            col.prodCap.assign(ins.T, 0.0);
+            col.remCap.assign(ins.T, 0.0);
+            col.Q.assign(ins.T, 0.0);
+            col.Qr.assign(ins.T, 0.0);
+            col.Y.assign(ins.T, 0.0);
+            col.Yr.assign(ins.T, 0.0);
+            col.gamma.assign(ins.T, 0.0);
+            col.gammar.assign(ins.T, 0.0);
             col.isDummy = false;
 
             for (int t = 0; t < ins.T; ++t) {
@@ -523,7 +498,7 @@ int main() {
         }
 
         const int maxIterations = 100;
-        const double rcTolerance = -1e-9;
+        const double rcTolerance = -1e-6;
 
         std::cout << std::fixed << std::setprecision(6);
         std::cout << "============================================================\n";
