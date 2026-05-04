@@ -26,7 +26,7 @@ struct Instance {
 
     std::vector<double> y0;   // initial serviceable inventory
     std::vector<double> yr0;  // initial recoverable inventory
-    bool useValidIneq = true; // enable valid inequalities
+    bool useValidIneq = false; // enable valid inequalities
 };
 
 struct Schedule {
@@ -111,12 +111,14 @@ Instance buildReferenceInstance() {
 // Maximum possible production quantity given available capacity
 std::vector<std::vector<double>> computeBigM(const Instance& ins) {
     std::vector<std::vector<double>> M(ins.K, std::vector<double>(ins.T, 0.0));
+
     for (int k = 0; k < ins.K; ++k) {
         for (int t = 0; t < ins.T; ++t) {
             const double numerator = max2(0.0, max2(ins.ct[t] - ins.ts[k], ins.ctr[t] - ins.tsr[k]));
             const double denominator = min2(ins.tp[k], ins.tpr[k]);
+
             if (denominator <= 0.0) {
-                throw std::runtime_error("Dont divide by zero in calc M");
+                throw std::runtime_error("Parameters tp, tpr must be > 0");
             }
             M[k][t] = numerator / denominator;
         }
@@ -142,15 +144,7 @@ Schedule makeDummySchedule(const Instance& ins, int k, double penalty = 1.0e6) {
 }
 
 // Solves SLULSP-RM for one product to find improving column
-PricingResult solvePricingSubproblem(
-    const Instance& ins,
-    const std::vector<std::vector<double>>& M,
-    int k,
-    double sigma,
-    const std::vector<double>& piProd,
-    const std::vector<double>& piRem,
-    double rcTolerance = -1e-6) {
-
+PricingResult solvePricingSubproblem( const Instance& ins, const std::vector<std::vector<double>>& M, int k, double sigma, const std::vector<double>& piProd, const std::vector<double>& piRem, double rcTolerance = 1e-6) {
     IloEnv env;
     PricingResult result;
 
@@ -158,15 +152,15 @@ PricingResult solvePricingSubproblem(
         IloModel model(env);
 
         std::vector<IloNumVar> Q(ins.T), Qr(ins.T), Y(ins.T), Yr(ins.T);
-        std::vector<IloNumVar> gamma(ins.T), gammar(ins.T);
+        std::vector<IloBoolVar> gamma(ins.T), gammar(ins.T);
 
         for (int t = 0; t < ins.T; ++t) {
-            Q[t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
-            Qr[t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
-            Y[t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
-            Yr[t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
-            gamma[t] = IloNumVar(env, 0.0, 1.0, ILOINT);
-            gammar[t] = IloNumVar(env, 0.0, 1.0, ILOINT);
+            Q[t] = IloNumVar(env, 0.0, IloInfinity, ILOINT);
+            Qr[t] = IloNumVar(env, 0.0, IloInfinity, ILOINT);
+            Y[t] = IloNumVar(env, 0.0, IloInfinity, ILOINT);
+            Yr[t] = IloNumVar(env, 0.0, IloInfinity, ILOINT);
+            gamma[t] = IloBoolVar(env);
+            gammar[t] = IloBoolVar(env);
         }
 
         // Reduced-cost objective from the paper:
@@ -240,7 +234,7 @@ PricingResult solvePricingSubproblem(
         cplex.setOut(env.getNullStream());
         cplex.setWarning(env.getNullStream());
         cplex.setParam(IloCplex::Param::Threads, 1);
-        cplex.setParam(IloCplex::Param::MIP::Display, 0);
+        cplex.setParam(IloCplex::Param::RootAlgorithm, IloCplex::Dual);
 
         if (!cplex.solve()) {
             throw std::runtime_error("Pricing subproblem was not solved successfully.");
@@ -303,6 +297,7 @@ MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const 
             for (std::size_t n = 0; n < schedulesPool[k].size(); ++n) {
                 std::ostringstream name;
                 name << "delta_k" << (k + 1) << "_n" << (n + 1);
+
                 delta[k].push_back(IloNumVar(env, 0.0, 1.0, ILOFLOAT, name.str().c_str()));
                 objective += schedulesPool[k][n].cost * delta[k].back(); // min Z = sum_k sum_n_from_S nc_kn * delta_kn
             }
@@ -319,8 +314,10 @@ MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const 
             for (std::size_t n = 0; n < schedulesPool[k].size(); ++n) {
                 lhs += delta[k][n];
             }
+
             std::ostringstream cname;
             cname << "chooseOne_k" << (k + 1);
+
             chooseOne.add(IloRange(env, 1.0, lhs, 1.0, cname.str().c_str()));
             lhs.end();
         }
@@ -334,8 +331,10 @@ MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const 
                     lhs += schedulesPool[k][n].prodCap[t] * delta[k][n];
                 }
             }
+
             std::ostringstream cname;
             cname << "prodCap_t" << (t + 1);
+
             prodCapConstr.add(IloRange(env, -IloInfinity, lhs, datasetInstance.ct[t], cname.str().c_str()));
             lhs.end();
         }
@@ -351,6 +350,7 @@ MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const 
             }
             std::ostringstream cname;
             cname << "remCap_t" << (t + 1);
+
             remCapConstr.add(IloRange(env, -IloInfinity, lhs, datasetInstance.ctr[t], cname.str().c_str()));
             lhs.end();
         }
@@ -360,8 +360,6 @@ MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const 
         cplex.setOut(env.getNullStream());
         cplex.setWarning(env.getNullStream());
         cplex.setParam(IloCplex::Param::Threads, 1);
-        //cplex.setParam(IloCplex::Param::RootAlgorithm, IloCplex::Primal);
-        //cplex.setParam(IloCplex::Param::LPMethod, IloCplex::Primal);
 
         if (!cplex.solve()) {
             throw std::runtime_error("Restricted master LP was not solved successfully.");
@@ -398,22 +396,21 @@ MasterResult solveRelaxedMasterProblemSPP(const Instance& datasetInstance,const 
 }
 
 // Solves integer master problem over generated columns (upper bound)
-std::vector<std::vector<double>> solveIntegerMasterProblemSPP(
-    const Instance& datasetInstance,
-    const std::vector<std::vector<Schedule>>& schedulesPool,
-    double& objectiveValue) {
-
+std::vector<std::vector<double>> solveIntegerMasterProblemSPP( const Instance& datasetInstance, const std::vector<std::vector<Schedule>>& schedulesPool, double& objectiveValue) {
     IloEnv env;
 
     try {
         IloModel model(env);
-        std::vector<std::vector<IloBoolVar>> delta(datasetInstance.K);
+        std::vector<std::vector<IloIntVar>> delta(datasetInstance.K);
         IloExpr objective(env);
 
         for (int k = 0; k < datasetInstance.K; ++k) {
             delta[k].reserve(static_cast<std::size_t>(schedulesPool[k].size()));
             for (std::size_t n = 0; n < schedulesPool[k].size(); ++n) {
-                delta[k].push_back(IloBoolVar(env));
+                std::ostringstream name;
+                name << "delta_k" << (k + 1) << "_n" << (n + 1);
+
+                delta[k].push_back(IloNumVar(env, 0.0, 1.0, ILOINT, name.str().c_str()));
                 objective += schedulesPool[k][n].cost * delta[k].back(); // min Z = sum_k sum_n_from_S nc_kn * delta_kn
             }
         }
@@ -476,14 +473,651 @@ std::vector<std::vector<double>> solveIntegerMasterProblemSPP(
 void printScheduleBrief(const Schedule& s) {
     std::cout << "  cost=" << s.cost << (s.isDummy ? "  [dummy]" : "") << "\n";
     std::cout << "  Q   : ";
-    for (double v : s.Q) std::cout << std::setw(8) << v;
+    for (double v : s.Q) std::cout << std::setw(12) << v;
     std::cout << "\n  Qr  : ";
-    for (double v : s.Qr) std::cout << std::setw(8) << v;
+    for (double v : s.Qr) std::cout << std::setw(12) << v;
+
+    std::cout << "\n  Y  : ";
+    for (double v : s.Y) std::cout << std::setw(12) << v;
+    std::cout << "\n  Yr  : ";
+    for (double v : s.Yr) std::cout << std::setw(12) << v;
+
     std::cout << "\n  gam : ";
-    for (double v : s.gamma) std::cout << std::setw(8) << v;
+    for (double v : s.gamma) std::cout << std::setw(12) << v;
     std::cout << "\n  gamr: ";
-    for (double v : s.gammar) std::cout << std::setw(8) << v;
+    for (double v : s.gammar) std::cout << std::setw(12) << v;
     std::cout << "\n";
+}
+
+#ifndef BRANCHING
+
+struct BranchConstraint{
+    int k = -1;      // product index
+    int n = -1;      // original column index in pool[k]
+    int value = -1;  // 0 or 1
+};
+
+struct RestrictedBranchAndBoundResult {
+    bool foundFeasible = false;
+    double bestObjective = IloInfinity;
+    std::vector<std::vector<double>> bestDeltaValues;
+    int exploredNodes = 0;
+};
+
+struct ActiveColumnsFromCG {
+    std::vector<std::vector<int>> activeCols;  // original column indices from pool
+};
+
+ActiveColumnsFromCG extractPositiveDeltaColumns(const Instance& datasetInstance, const MasterResult& relaxedMaster, double tol = 1e-9)
+{
+    ActiveColumnsFromCG active;
+    active.activeCols.resize(datasetInstance.K);
+
+    for (int k = 0; k < datasetInstance.K; ++k) {
+        for (int n = 0; n < relaxedMaster.deltaValues[k].size(); ++n) {
+            if (relaxedMaster.deltaValues[k][n] > tol) {
+                active.activeCols[k].push_back(n);
+            }
+        }
+    }
+    return active;
+}
+
+bool isIntegralRestrictedMasterSolution(const MasterResult& master, const ActiveColumnsFromCG& activeSet,double tol = 1e-9)
+{
+    for (int k = 0; k < activeSet.activeCols.size(); ++k) {
+        for (int originalCol : activeSet.activeCols[k]) {
+            double v = master.deltaValues[k][originalCol];
+            if (v > tol && v < 1.0 - tol) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool findFractionalDeltaOnPositiveSupport(const MasterResult& master, const ActiveColumnsFromCG& activeSet, int& branchK, int& branchOriginalCol, double& branchValue, double tol = 1e-9)
+{
+    for (int k = 0; k < activeSet.activeCols.size(); ++k) {
+        for (int originalCol : activeSet.activeCols[k]) {
+            double v = master.deltaValues[k][originalCol];
+            if (v > tol && v < 1.0 - tol) {
+                branchK = k;
+                branchOriginalCol = originalCol;
+                branchValue = v;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool areBranchingConstraintsConsistent(const Instance& datasetInstance, const std::vector<BranchConstraint>& branchingConstraints)
+{
+    std::vector<std::vector<int>> fixed(datasetInstance.K);
+
+    for (int k = 0; k < datasetInstance.K; ++k) {
+        fixed[k].assign(10000, -1);
+    }
+
+    std::vector<int> chosenOne(datasetInstance.K, -1);
+
+    for (const auto& bc : branchingConstraints) {
+        if (bc.k < 0 || bc.n < 0 || (bc.value != 0 && bc.value != 1)) {
+            return false;
+        }
+
+        if (bc.value == 1) {
+            if (chosenOne[bc.k] != -1 && chosenOne[bc.k] != bc.n) {
+                return false;
+            }
+            chosenOne[bc.k] = bc.n;
+        }
+    }
+
+    for (std::size_t i = 0; i < branchingConstraints.size(); ++i) {
+        for (std::size_t j = i + 1; j < branchingConstraints.size(); ++j) {
+            if (branchingConstraints[i].k == branchingConstraints[j].k && branchingConstraints[i].n == branchingConstraints[j].n && branchingConstraints[i].value != branchingConstraints[j].value) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+MasterResult solveSPPWithBranching(const Instance& datasetInstance, const std::vector<std::vector<Schedule>>& schedulesPool, const ActiveColumnsFromCG& activeSet, const std::vector<BranchConstraint>& branchingConstraints)
+{
+    IloEnv env;
+    MasterResult res;
+
+    try {
+        if (!areBranchingConstraintsConsistent(datasetInstance, branchingConstraints)) {
+            res.solved = false;
+            env.end();
+            return res;
+        }
+
+        IloModel model(env);
+
+        std::vector<std::vector<IloNumVar>> deltaLocal(datasetInstance.K);
+        IloExpr objective(env);
+
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            const auto& cols = activeSet.activeCols[k];
+            deltaLocal[k].reserve(cols.size());
+
+            for (std::size_t j = 0; j < cols.size(); ++j) {
+                int originalCol = cols[j];
+
+                std::ostringstream name;
+                name << "delta_k" << (k + 1) << "_col" << (originalCol + 1);
+
+                deltaLocal[k].push_back(IloNumVar(env, 0.0, 1.0, ILOFLOAT, name.str().c_str()));
+                objective += schedulesPool[k][originalCol].cost * deltaLocal[k].back();
+            }
+        }
+
+        model.add(IloMinimize(env, objective));
+
+        // choose one schedule per product
+        IloRangeArray chooseOne(env);
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            IloExpr lhs(env);
+            for (std::size_t j = 0; j < deltaLocal[k].size(); ++j) {
+                lhs += deltaLocal[k][j];
+            }
+            std::ostringstream cname;
+            cname << "chooseOne_k" << (k + 1);
+
+            chooseOne.add(IloRange(env, 1.0, lhs, 1.0, cname.str().c_str()));
+            lhs.end();
+        }
+        model.add(chooseOne);
+
+        // production capacity
+        IloRangeArray prodCapConstr(env);
+        for (int t = 0; t < datasetInstance.T; ++t) {
+            IloExpr lhs(env);
+            for (int k = 0; k < datasetInstance.K; ++k) {
+                const auto& cols = activeSet.activeCols[k];
+                for (std::size_t j = 0; j < cols.size(); ++j) {
+                    int originalCol = cols[j];
+                    lhs += schedulesPool[k][originalCol].prodCap[t] * deltaLocal[k][j];
+                }
+            }
+            std::ostringstream cname;
+            cname << "prodCap_t" << (t + 1);
+
+            prodCapConstr.add(IloRange(env, -IloInfinity, lhs, datasetInstance.ct[t], cname.str().c_str()));
+            lhs.end();
+        }
+        model.add(prodCapConstr);
+
+        // rem capacity
+        IloRangeArray remCapConstr(env);
+        for (int t = 0; t < datasetInstance.T; ++t) {
+            IloExpr lhs(env);
+            for (int k = 0; k < datasetInstance.K; ++k) {
+                const auto& cols = activeSet.activeCols[k];
+                for (std::size_t j = 0; j < cols.size(); ++j) {
+                    int originalCol = cols[j];
+                    lhs += schedulesPool[k][originalCol].remCap[t] * deltaLocal[k][j];
+                }
+            }
+            std::ostringstream cname;
+            cname << "remCap_t" << (t + 1);
+
+            remCapConstr.add(IloRange(env, -IloInfinity, lhs, datasetInstance.ctr[t], cname.str().c_str()));
+            lhs.end();
+        }
+        model.add(remCapConstr);
+
+        for (const auto& bc : branchingConstraints) {
+            int k = bc.k;
+            int originalCol = bc.n;
+
+            int localIndex = -1;
+            for (int j = 0; j < static_cast<int>(activeSet.activeCols[k].size()); ++j) {
+                if (activeSet.activeCols[k][j] == originalCol) {
+                    localIndex = j;
+                    break;
+                }
+            }
+
+            if (localIndex < 0) {
+                // branch on index from outside support - invalid
+                res.solved = false;
+                objective.end();
+                env.end();
+                return res;
+            }
+
+            if (bc.value == 0) {
+                model.add(deltaLocal[k][localIndex] == 0.0);
+            }
+            else {
+                model.add(deltaLocal[k][localIndex] == 1.0);
+
+                // if the column is 1, then all others must be 0
+                for (int j = 0; j < static_cast<int>(activeSet.activeCols[k].size()); ++j) {
+                    if (j == localIndex) continue;
+                    model.add(deltaLocal[k][j] == 0.0);
+                }
+            }
+        }
+
+        IloCplex cplex(model);
+        cplex.setOut(env.getNullStream());
+        cplex.setWarning(env.getNullStream());
+        cplex.setParam(IloCplex::Param::Threads, 1);
+        cplex.setParam(IloCplex::Param::RootAlgorithm, IloCplex::Primal);
+
+        if (!cplex.solve()) {
+            res.solved = false;
+            objective.end();
+            env.end();
+            return res;
+        }
+
+        res.solved = true;
+        res.objective = cplex.getObjValue();
+        res.sigma.resize(datasetInstance.K, 0.0);
+        res.piProd.resize(datasetInstance.T, 0.0);
+        res.piRem.resize(datasetInstance.T, 0.0);
+
+        res.deltaValues.resize(datasetInstance.K);
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            res.deltaValues[k].assign(schedulesPool[k].size(), 0.0);
+        }
+
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            res.sigma[k] = cplex.getDual(chooseOne[k]);
+
+            const auto& cols = activeSet.activeCols[k];
+            for (std::size_t j = 0; j < cols.size(); ++j) {
+                int originalCol = cols[j];
+                res.deltaValues[k][originalCol] = cplex.getValue(deltaLocal[k][j]);
+            }
+        }
+
+        for (int t = 0; t < datasetInstance.T; ++t) {
+            res.piProd[t] = cplex.getDual(prodCapConstr[t]);
+            res.piRem[t] = cplex.getDual(remCapConstr[t]);
+        }
+
+        objective.end();
+        env.end();
+        return res;
+    }
+    catch (...) {
+        env.end();
+        throw;
+    }
+}
+
+void restrictedBranchAndBound(const Instance& datasetInstance, const std::vector<std::vector<Schedule>>& schedulesPool, const ActiveColumnsFromCG& activeSet,const std::vector<BranchConstraint>& currentConstraints, RestrictedBranchAndBoundResult& globalBest, double tol = 1e-9)
+{
+    MasterResult nodeResult = solveSPPWithBranching(datasetInstance, schedulesPool, activeSet, currentConstraints);
+
+    globalBest.exploredNodes++;
+
+    // infeasible node
+    if (!nodeResult.solved) {
+        return;
+    }
+
+    // bound pruning
+    if (globalBest.foundFeasible && nodeResult.objective >= globalBest.bestObjective - tol) {
+        return;
+    }
+
+    // integral node -> incumbent
+    if (isIntegralRestrictedMasterSolution(nodeResult, activeSet, tol)) {
+        globalBest.foundFeasible = true;
+        globalBest.bestObjective = nodeResult.objective;
+        globalBest.bestDeltaValues = nodeResult.deltaValues;
+        return;
+    }
+
+    int branchK = -1;
+    int branchOriginalCol = -1;
+    double branchValue = 0.0;
+
+    bool found = findFractionalDeltaOnPositiveSupport(nodeResult, activeSet, branchK,  branchOriginalCol, branchValue, tol);
+
+    if (!found) {
+        return;
+    }
+
+    // LEFT branch: delta(k,n) = 0
+    {
+        std::vector<BranchConstraint> leftConstraints = currentConstraints;
+        leftConstraints.push_back({ branchK, branchOriginalCol, 0 });
+
+        restrictedBranchAndBound(datasetInstance, schedulesPool, activeSet, leftConstraints, globalBest, tol);
+    }
+
+    // RIGHT branch: delta(k,n) = 1
+    {
+        std::vector<BranchConstraint> rightConstraints = currentConstraints;
+        rightConstraints.push_back({ branchK, branchOriginalCol, 1 });
+
+        restrictedBranchAndBound(datasetInstance, schedulesPool, activeSet, rightConstraints, globalBest, tol);
+    }
+}
+
+RestrictedBranchAndBoundResult solveRestrictedBranchAndBoundOnlyOnPositiveSupport(const Instance& datasetInstance, const std::vector<std::vector<Schedule>>& schedulesPool, const MasterResult& relaxedMasterFromCG, double tol = 1e-9){
+    ActiveColumnsFromCG activeSet = extractPositiveDeltaColumns(datasetInstance, relaxedMasterFromCG, tol);
+
+    RestrictedBranchAndBoundResult result;
+    std::vector<BranchConstraint> rootConstraints;
+
+    for (int k = 0; k < datasetInstance.K; ++k) {
+        if (activeSet.activeCols[k].empty()) {
+            return result;
+        }
+    }
+
+    restrictedBranchAndBound(datasetInstance, schedulesPool, activeSet, rootConstraints, result, tol);
+
+    return result;
+}
+#endif
+
+//Fixing
+struct FixedSetupsFromCG {
+    // -1 = no fixing
+    //  0 = fix do 0
+    //  1 = fix do 1
+    std::vector<std::vector<int>> gammaFix;
+    std::vector<std::vector<int>> gammarFix;
+};
+
+struct FixedFullResult {
+    bool solved = false;
+    bool optimal = false;
+
+    double objective = 0.0;
+    double bestBound = 0.0;
+    double mipGap = 0.0;
+
+    std::vector<std::vector<double>> Q;
+    std::vector<std::vector<double>> Qr;
+    std::vector<std::vector<double>> Y;
+    std::vector<std::vector<double>> Yr;
+    std::vector<std::vector<double>> gamma;
+    std::vector<std::vector<double>> gammar;
+};
+
+FixedSetupsFromCG extractSetupFixingsFromIntegralProducts(const Instance& datasetInstance, const MasterResult& master, const std::vector<std::vector<Schedule>>& schedulesPool, double tol = 1e-6){
+    FixedSetupsFromCG fix;
+    fix.gammaFix.assign(datasetInstance.K, std::vector<int>(datasetInstance.T, -1));
+    fix.gammarFix.assign(datasetInstance.K, std::vector<int>(datasetInstance.T, -1));
+
+    for (int k = 0; k < datasetInstance.K; ++k) {
+        int chosenCol = -1;
+
+        for (int n = 0; n < master.deltaValues[k].size(); ++n) {
+            if (std::abs(master.deltaValues[k][n] - 1.0) <= tol) {
+                chosenCol = n;
+                break;
+            }
+        }
+
+        // fix only when product is integral
+        if (chosenCol < 0) {
+            continue;
+        }
+
+        const Schedule& s = schedulesPool[k][chosenCol];
+
+        for (int t = 0; t < datasetInstance.T; ++t) {
+            fix.gammaFix[k][t] = (s.gamma[t] > 0.5 ? 1 : 0);
+            fix.gammarFix[k][t] = (s.gammar[t] > 0.5 ? 1 : 0);
+        }
+    }
+
+    return fix;
+}
+
+void printSetupFixingsFromCG(const Instance& datasetInstance, const FixedSetupsFromCG& fix){
+    std::cout << "\n========== Setup fixings extracted from integral CG products ==========\n";
+
+    for (int k = 0; k < datasetInstance.K; ++k) {
+        bool anyFix = false;
+        for (int t = 0; t < datasetInstance.T; ++t) {
+            if (fix.gammaFix[k][t] != -1 || fix.gammarFix[k][t] != -1) {
+                anyFix = true;
+                break;
+            }
+        }
+
+        if (!anyFix) {
+            std::cout << "Product " << (k + 1) << ": no fixing\n";
+            continue;
+        }
+
+        std::cout << "Product " << (k + 1) << ":\n";
+        std::cout << "  gamma : ";
+        for (int t = 0; t < datasetInstance.T; ++t) {
+            std::cout << std::setw(6) << fix.gammaFix[k][t];
+        }
+        std::cout << "\n";
+
+        std::cout << "  gammar: ";
+        for (int t = 0; t < datasetInstance.T; ++t) {
+            std::cout << std::setw(6) << fix.gammarFix[k][t];
+        }
+        std::cout << "\n";
+    }
+
+    std::cout << "======================================================================\n";
+}
+
+FixedFullResult solveOriginalModelWithFixings(const Instance& datasetInstance, const std::vector<std::vector<double>>& M, const FixedSetupsFromCG& fixings, bool useValidIneq = true, double timeLimitSeconds = 60.0){
+    IloEnv env;
+    FixedFullResult result;
+
+    try {
+        IloModel model(env);
+
+        std::vector<std::vector<IloNumVar>> Q(datasetInstance.K), Qr(datasetInstance.K);
+        std::vector<std::vector<IloNumVar>> Y(datasetInstance.K), Yr(datasetInstance.K);
+        std::vector<std::vector<IloBoolVar>> gamma(datasetInstance.K), gammar(datasetInstance.K);
+
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            Q[k].reserve(datasetInstance.T);
+            Qr[k].reserve(datasetInstance.T);
+            Y[k].reserve(datasetInstance.T);
+            Yr[k].reserve(datasetInstance.T);
+            gamma[k].reserve(datasetInstance.T);
+            gammar[k].reserve(datasetInstance.T);
+
+            for (int t = 0; t < datasetInstance.T; ++t) {
+                Q[k].push_back(IloNumVar(env, 0.0, IloInfinity, ILOINT));
+                Qr[k].push_back(IloNumVar(env, 0.0, IloInfinity, ILOINT));
+                Y[k].push_back(IloNumVar(env, 0.0, IloInfinity, ILOINT));
+                Yr[k].push_back(IloNumVar(env, 0.0, IloInfinity, ILOINT));
+                gamma[k].push_back(IloBoolVar(env));
+                gammar[k].push_back(IloBoolVar(env));
+            }
+        }
+
+        IloExpr objective(env);
+
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            for (int t = 0; t < datasetInstance.T; ++t) {
+                objective += datasetInstance.hc[k] * Y[k][t];
+                objective += datasetInstance.hcr[k] * Yr[k][t];
+                objective += datasetInstance.pc[k] * Q[k][t];
+                objective += datasetInstance.pcr[k] * Qr[k][t];
+                objective += datasetInstance.sc[k] * gamma[k][t];
+                objective += datasetInstance.scr[k] * gammar[k][t];
+            }
+        }
+
+        model.add(IloMinimize(env, objective));
+
+        // serviceables balance
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            model.add(datasetInstance.y0[k] + Q[k][0] + Qr[k][0] == datasetInstance.d[k][0] + Y[k][0]);
+
+            for (int t = 1; t < datasetInstance.T; ++t) {
+                model.add(Y[k][t - 1] + Q[k][t] + Qr[k][t] == datasetInstance.d[k][t] + Y[k][t]);
+            }
+        }
+
+        // recoverables balance
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            model.add(datasetInstance.yr0[k] + datasetInstance.r[k][0] == Qr[k][0] + Yr[k][0]);
+
+            for (int t = 1; t < datasetInstance.T; ++t) {
+                model.add(Yr[k][t - 1] + datasetInstance.r[k][t] == Qr[k][t] + Yr[k][t]);
+            }
+        }
+
+        // production capacity
+        for (int t = 0; t < datasetInstance.T; ++t) {
+            IloExpr lhs(env);
+
+            for (int k = 0; k < datasetInstance.K; ++k) {
+                lhs += datasetInstance.tp[k] * Q[k][t] + datasetInstance.ts[k] * gamma[k][t];
+            }
+
+            model.add(lhs <= datasetInstance.ct[t]);
+            lhs.end();
+        }
+
+        // remanufacturing capacity
+        for (int t = 0; t < datasetInstance.T; ++t) {
+            IloExpr lhs(env);
+
+            for (int k = 0; k < datasetInstance.K; ++k) {
+                lhs += datasetInstance.tpr[k] * Qr[k][t] + datasetInstance.tsr[k] * gammar[k][t];
+            }
+
+            model.add(lhs <= datasetInstance.ctr[t]);
+            lhs.end();
+        }
+
+        // linking
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            for (int t = 0; t < datasetInstance.T; ++t) {
+                model.add(Q[k][t] <= M[k][t] * gamma[k][t]);
+                model.add(Qr[k][t] <= M[k][t] * gammar[k][t]);
+            }
+        }
+
+        // optional valid inequalities
+        if (useValidIneq) {
+            for (int k = 0; k < datasetInstance.K; ++k) {
+                // VI (18)
+                for (int t = 0; t <= datasetInstance.T - 2; ++t) {
+                    for (int p = 1; p <= datasetInstance.T - 1 - t; ++p) {
+                        IloExpr rhs(env);
+
+                        for (int s = t + 1; s <= t + p; ++s) {
+                            rhs += datasetInstance.d[k][s];
+                            rhs -= M[k][s] * gamma[k][s];
+                            rhs -= M[k][s] * gammar[k][s];
+                        }
+
+                        model.add(Y[k][t] >= rhs);
+                        rhs.end();
+                    }
+                }
+
+                // VI (19)
+                for (int t = 1; t < datasetInstance.T; ++t) {
+                    for (int p = 1; p <= t; ++p) {
+                        IloExpr rhs(env);
+
+                        for (int s = t - p; s <= t; ++s) {
+                            rhs += datasetInstance.r[k][s];
+                            rhs -= M[k][s] * gammar[k][s];
+                        }
+
+                        model.add(Yr[k][t] >= rhs);
+                        rhs.end();
+                    }
+                }
+            }
+        }
+
+        // ===== FIXINGS FROM CG =====
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            for (int t = 0; t < datasetInstance.T; ++t) {
+                if (fixings.gammaFix[k][t] != -1) {
+                    model.add(gamma[k][t] == fixings.gammaFix[k][t]);
+                }
+                if (fixings.gammarFix[k][t] != -1) {
+                    model.add(gammar[k][t] == fixings.gammarFix[k][t]);
+                }
+            }
+        }
+
+        IloCplex cplex(model);
+        cplex.setOut(env.getNullStream());
+        cplex.setWarning(env.getNullStream());
+        cplex.setParam(IloCplex::Param::Threads, 1);
+        cplex.setParam(IloCplex::Param::TimeLimit, timeLimitSeconds);
+
+        if (!cplex.solve()) {
+            objective.end();
+            env.end();
+            return result;
+        }
+
+        result.solved = true;
+        result.objective = cplex.getObjValue();
+        result.bestBound = cplex.getBestObjValue();
+        result.mipGap = cplex.getMIPRelativeGap();
+        result.optimal = (cplex.getStatus() == IloAlgorithm::Optimal);
+
+        result.Q.assign(datasetInstance.K, std::vector<double>(datasetInstance.T, 0.0));
+        result.Qr.assign(datasetInstance.K, std::vector<double>(datasetInstance.T, 0.0));
+        result.Y.assign(datasetInstance.K, std::vector<double>(datasetInstance.T, 0.0));
+        result.Yr.assign(datasetInstance.K, std::vector<double>(datasetInstance.T, 0.0));
+        result.gamma.assign(datasetInstance.K, std::vector<double>(datasetInstance.T, 0.0));
+        result.gammar.assign(datasetInstance.K, std::vector<double>(datasetInstance.T, 0.0));
+
+        for (int k = 0; k < datasetInstance.K; ++k) {
+            for (int t = 0; t < datasetInstance.T; ++t) {
+                result.Q[k][t] = cplex.getValue(Q[k][t]);
+                result.Qr[k][t] = cplex.getValue(Qr[k][t]);
+                result.Y[k][t] = cplex.getValue(Y[k][t]);
+                result.Yr[k][t] = cplex.getValue(Yr[k][t]);
+                result.gamma[k][t] = cplex.getValue(gamma[k][t]);
+                result.gammar[k][t] = cplex.getValue(gammar[k][t]);
+            }
+        }
+
+        objective.end();
+        env.end();
+        return result;
+    }
+    catch (...) {
+        env.end();
+        throw;
+    }
+}
+
+void printFixedFullModelResultSummary(const FixedFullResult& res)
+{
+    std::cout << "\n========== Full Model with setup fixings from CG ==========\n";
+
+    if (!res.solved) {
+        std::cout << "No feasible solution found.\n";
+        std::cout << "==========================================================\n";
+        return;
+    }
+
+    std::cout << "Objective  = " << res.objective << "\n";
+    std::cout << "BestBound  = " << res.bestBound << "\n";
+    std::cout << "MIP Gap    = " << 100.0 * res.mipGap << "%\n";
+    std::cout << "Status     = " << (res.optimal ? "Optimal" : "Time-limited / non-proven") << "\n";
+    std::cout << "==========================================================\n";
 }
 
 int main() {
@@ -535,7 +1169,7 @@ int main() {
             }
 
             std::cout << "  Columns per product: ";
-            for (int k = 0; k < ins.K; ++k) std::cout << std::setw(6) << pool[k].size();
+            for (int k = 0; k < ins.K; ++k) std::cout << std::setw(8) << pool[k].size();
             std::cout << "\n\n";
 
             if (!addedAnyColumn) {
@@ -554,7 +1188,55 @@ int main() {
         // Upper bound from integer master
         double integerMasterObj = std::numeric_limits<double>::quiet_NaN();
         auto chosen = solveIntegerMasterProblemSPP(ins, pool, integerMasterObj);
-        std::cout << "Upper Bound (from solving master problem over generated columns): " << integerMasterObj << "\n\n";
+        std::cout << "Upper Bound (from solving master problem over generated columns): " << integerMasterObj << "\n\n"; //?
+
+        // Printing delta values
+#ifndef PRINT_SCHEDULES
+        std::cout << "========== Chosen schedules (found deltas) ==========\n";
+        for (int i = 0; i < master.deltaValues.size(); i++) {
+            std::cout << "\nProduct " << i + 1 << " has " << master.deltaValues[i].size() << " schedules\n";
+
+            for (int j = 0; j < master.deltaValues[i].size(); j++) {
+                if (master.deltaValues[i][j] <= 0.001) continue;
+                std::cout << "\tcol: " << j+1 <<  "\tdelta: " << master.deltaValues[i][j] << "\t cost: " << pool[i][j].cost << "\n";
+            }
+        }
+#endif
+
+        std::cout << "\n========== Printing schedules ==========\n";
+        for (int i = 0; i < pool.size(); i++) {
+            for (int j = 0; j < pool[i].size(); j++) {
+                std::cout << "Product " << i+1 << " - schedule " << j+1 << ":\n";
+                printScheduleBrief(pool[i][j]);
+            }
+        }
+
+#ifndef BRANCHING
+        std::cout << "\n========== B&B only on >0 deltas from CG ==========\n";
+        RestrictedBranchAndBoundResult restrictedBB = solveRestrictedBranchAndBoundOnlyOnPositiveSupport(ins, pool, master);
+
+        if (!restrictedBB.foundFeasible) {
+            std::cout << "  No feasible integral SPP solution exists on this positive-delta support.\n";
+        }
+        else {
+            std::cout << "  Best objective = " << restrictedBB.bestObjective << "\n";
+            std::cout << "  Explored nodes = " << restrictedBB.exploredNodes << "\n";
+
+            for (int k = 0; k < ins.K; ++k) {
+                for (std::size_t n = 0; n < restrictedBB.bestDeltaValues[k].size(); ++n) {
+                    if (restrictedBB.bestDeltaValues[k][n] > 0.5) {
+                        std::cout << "  Product " << (k + 1) << " -> column #" << (n + 1) << "  cost = " << pool[k][n].cost << "\n";
+                    }
+                }
+            }
+        }
+#endif
+
+        FixedSetupsFromCG fixings = extractSetupFixingsFromIntegralProducts(ins, master, pool);
+        printSetupFixingsFromCG(ins, fixings);
+
+        FixedFullResult fixedMilp = solveOriginalModelWithFixings(ins, M, fixings, true, 60.0);
+        printFixedFullModelResultSummary(fixedMilp);
 
         return 0;
     }

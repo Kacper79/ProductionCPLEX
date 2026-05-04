@@ -93,7 +93,7 @@ std::vector<std::vector<double>> computeBigM(const Instance& ins) {
             const double denominator = min2(ins.tp[k], ins.tpr[k]);
 
             if (denominator <= 0.000001) {
-                throw std::runtime_error("Niepoprawne dane: tp/tpr muszą być dodatnie.");
+                throw std::runtime_error("tp/tpr parameters must be > 0");
             }
             M[k][t] = numerator / denominator;
         }
@@ -101,52 +101,7 @@ std::vector<std::vector<double>> computeBigM(const Instance& ins) {
     return M;
 }
 
-// Adds valid inequalities to strengthen LP relaxation
-void addValidInequalities(
-    IloEnv env,
-    IloModel& model,
-    const Instance& ins,
-    const std::vector<std::vector<double>>& M,
-    const std::vector<std::vector<IloNumVar>>& Y,
-    const std::vector<std::vector<IloNumVar>>& Yr,
-    const std::vector<std::vector<IloBoolVar>>& gamma,
-    const std::vector<std::vector<IloBoolVar>>& gammar) {
-
-    // Ensures enough inventory for demand if no setups
-    // (18) Y[k][t] >= sum_{s=t+1}^{t+p} d[k][s] - sum_{s=t+1}^{t+p} M[k][s] * (gamma[k][s] + gammar[k][s])
-    for (int k = 0; k < ins.K; ++k) {
-        for (int t = 0; t <= ins.T - 2; ++t) {
-            for (int p = 1; p <= ins.T - 1 - t; ++p) {
-                IloExpr rhs(env);
-                for (int s = t + 1; s <= t + p; ++s) {
-                    rhs += ins.d[k][s];
-                    rhs -= M[k][s] * gamma[k][s];
-                    rhs -= M[k][s] * gammar[k][s];
-                }
-                model.add(Y[k][t] >= rhs);
-                rhs.end();
-            }
-        }
-    }
-
-    // Ensures enough stock for returns if no reman setups
-    // (19) Yr[k][t] >= sum_{s=t-p}^{t} r[k][s] - sum_{s=t-p}^{t} M[k][s] * gammar[k][s]
-    for (int k = 0; k < ins.K; ++k) {
-        for (int t = 1; t < ins.T; ++t) {
-            for (int p = 1; p <= t; ++p) {
-                IloExpr rhs(env);
-                for (int s = t - p; s <= t; ++s) {
-                    rhs += ins.r[k][s];
-                    rhs -= M[k][s] * gammar[k][s];
-                }
-                model.add(Yr[k][t] >= rhs);
-                rhs.end();
-            }
-        }
-    }
-}
-
-int main2() {
+int main() {
     IloEnv env;
     try {
         const Instance ins = buildReferenceInstance();
@@ -154,9 +109,7 @@ int main2() {
 
         IloModel model(env);
 
-        // -----------------------------
         // Decision variables
-        // -----------------------------
         std::vector<std::vector<IloNumVar>> Q(ins.K, std::vector<IloNumVar>(ins.T));
         std::vector<std::vector<IloNumVar>> Qr(ins.K, std::vector<IloNumVar>(ins.T));
         std::vector<std::vector<IloNumVar>> Y(ins.K, std::vector<IloNumVar>(ins.T));
@@ -166,18 +119,16 @@ int main2() {
 
         for (int k = 0; k < ins.K; ++k) {
             for (int t = 0; t < ins.T; ++t) {
-                Q[k][t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
-                Qr[k][t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
-                Y[k][t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
-                Yr[k][t] = IloNumVar(env, 0.0, IloInfinity, ILOFLOAT);
+                Q[k][t] = IloNumVar(env, 0.0, IloInfinity, ILOINT);
+                Qr[k][t] = IloNumVar(env, 0.0, IloInfinity, ILOINT);
+                Y[k][t] = IloNumVar(env, 0.0, IloInfinity, ILOINT);
+                Yr[k][t] = IloNumVar(env, 0.0, IloInfinity, ILOINT);
                 gamma[k][t] = IloBoolVar(env);
                 gammar[k][t] = IloBoolVar(env);
             }
         }
 
-        // -----------------------------
         // Objective function (1)
-        // -----------------------------
         IloExpr objective(env);
         IloExpr holdingCost(env);
         IloExpr variableCost(env);
@@ -193,9 +144,7 @@ int main2() {
         objective += holdingCost + variableCost + setupCost;
         model.add(IloMinimize(env, objective));
 
-        // -----------------------------
         // Constraints
-        // -----------------------------
 
         // (2) Balance serviceables
         for (int k = 0; k < ins.K; ++k) {
@@ -267,18 +216,46 @@ int main2() {
 
         // (18)-(19) optional valid inequalities
         if (ins.useValidIneq) {
-            addValidInequalities(env, model, ins, M, Y, Yr, gamma, gammar);
+            // Ensures enough inventory for demand if no setups
+            // (18) Y[k][t] >= sum_{s=t+1}^{t+p} d[k][s] - sum_{s=t+1}^{t+p} M[k][s] * (gamma[k][s] + gammar[k][s])
+            for (int k = 0; k < ins.K; ++k) {
+                for (int t = 0; t <= ins.T - 2; ++t) {
+                    for (int p = 1; p <= ins.T - 1 - t; ++p) {
+                        IloExpr rhs(env);
+                        for (int s = t + 1; s <= t + p; ++s) {
+                            rhs += ins.d[k][s];
+                            rhs -= M[k][s] * gamma[k][s];
+                            rhs -= M[k][s] * gammar[k][s];
+                        }
+                        model.add(Y[k][t] >= rhs);
+                        rhs.end();
+                    }
+                }
+            }
+
+            // Ensures enough stock for returns if no reman setups
+            // (19) Yr[k][t] >= sum_{s=t-p}^{t} r[k][s] - sum_{s=t-p}^{t} M[k][s] * gammar[k][s]
+            for (int k = 0; k < ins.K; ++k) {
+                for (int t = 1; t < ins.T; ++t) {
+                    for (int p = 1; p <= t; ++p) {
+                        IloExpr rhs(env);
+                        for (int s = t - p; s <= t; ++s) {
+                            rhs += ins.r[k][s];
+                            rhs -= M[k][s] * gammar[k][s];
+                        }
+                        model.add(Yr[k][t] >= rhs);
+                        rhs.end();
+                    }
+                }
+            }
         }
 
-        // -----------------------------
         // Solve
-        // -----------------------------
         IloCplex cplex(model);
         cplex.setParam(IloCplex::Param::Threads, 1);
-        //cplex.setParam(IloCplex::Param::MIP::Display, 2);
 
         if (!cplex.solve()) {
-            std::cerr << "CPLEX nie znalazł rozwiązania. Status = " << cplex.getStatus() << "\n";
+            std::cerr << "CPLEX has not found any solutions with status " << cplex.getStatus() << "\n";
             objective.end();
             holdingCost.end();
             variableCost.end();
@@ -287,12 +264,10 @@ int main2() {
             return 1;
         }
 
-        // -----------------------------
         // Results report
-        // -----------------------------
         std::cout << std::fixed << std::setprecision(2) << "\n\n";
         std::cout << "-----------------------------------------------\n";
-        std::cout << "Model CLSP-RM-SS (C++, bez harmonogramowania)\n";
+        std::cout << "Model CLSP-RM-SS (C++, no schedules)\n";
         std::cout << "Status          = " << cplex.getStatus() << "\n";
         std::cout << "Objective value = " << cplex.getObjValue() << "\n";
         std::cout << "Holding cost    = " << cplex.getValue(holdingCost) << "\n";
@@ -303,27 +278,33 @@ int main2() {
         // Helper lambdas for printing results
         auto printNumMatrix = [&](const std::string& name, const std::vector<std::vector<IloNumVar>>& x) {
             std::cout << name << ":\n";
+
             for (int k = 0; k < ins.K; ++k) {
                 std::cout << "k=" << (k + 1) << ": ";
+
                 for (int t = 0; t < ins.T; ++t) {
-                    std::cout << std::setw(8) << cplex.getValue(x[k][t]);
+                    std::cout << std::setw(12) << cplex.getValue(x[k][t]);
                 }
+
                 std::cout << "\n";
             }
             std::cout << "\n";
-            };
+        };
 
         auto printBoolMatrix = [&](const std::string& name, const std::vector<std::vector<IloBoolVar>>& x) {
             std::cout << name << ":\n";
+
             for (int k = 0; k < ins.K; ++k) {
                 std::cout << "k=" << (k + 1) << ": ";
+
                 for (int t = 0; t < ins.T; ++t) {
-                    std::cout << std::setw(8) << cplex.getValue(x[k][t]);
+                    std::cout << std::setw(12) << cplex.getValue(x[k][t]);
                 }
+
                 std::cout << "\n";
             }
             std::cout << "\n";
-            };
+        };
 
         // Print decision variables
         printNumMatrix("Q   (production)", Q);
@@ -335,27 +316,31 @@ int main2() {
 
         // Display Big-M - maximum possible production quantity per period (6) (7)
         std::cout << "M values:\n";
+
         for (int k = 0; k < ins.K; ++k) {
             std::cout << "k=" << (k + 1) << ": ";
+
             for (int t = 0; t < ins.T; ++t) {
                 std::cout << std::setw(8) << M[k][t];
             }
+
             std::cout << "\n";
         }
         std::cout << "\n";
 
         // Capacity usage vs available (4) (5)
         std::cout << "Capacity usage:\n";
+
         for (int t = 0; t < ins.T; ++t) {
             double prodUsed = 0.0;
             double remUsed = 0.0;
+
             for (int k = 0; k < ins.K; ++k) {
                 prodUsed += ins.tp[k] * cplex.getValue(Q[k][t]) + ins.ts[k] * cplex.getValue(gamma[k][t]);
                 remUsed += ins.tpr[k] * cplex.getValue(Qr[k][t]) + ins.tsr[k] * cplex.getValue(gammar[k][t]);
             }
-            std::cout << "t=" << (t + 1)
-                << "  prod=" << prodUsed << "/" << ins.ct[t]
-                << "  rem=" << remUsed << "/" << ins.ctr[t] << "\n";
+
+            std::cout << "t=" << (t + 1) << "  prod=" << prodUsed << "/" << ins.ct[t] << "  rem=" << remUsed << "/" << ins.ctr[t] << "\n";
         }
 
         // Free CPLEX resources
