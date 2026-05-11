@@ -12,7 +12,7 @@ endif()
 project ("ProductionCPLEX")
 set(CMAKE_CXX_STANDARD 20)
 
-add_executable (ProductionCPLEX "src/ProductionColGenCPLEX.cpp") #   "src/ProductionBaseCPLEX.cpp"
+add_executable (ProductionCPLEX "src/ProductionColGenCPLEX.cpp") #   "src/ProductionBaseCPLEX.cpp"  "src/ProductionColGenCPLEX.cpp" "src/ProductionColGenFixCPLEX.cpp"
 
 set(CPLEX_ROOT_PATH "E:/CPLEX")
 

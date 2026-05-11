@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="ASCII"?><project>
+    	
+    <version>1.0</version>
+    	
+    <configs>
+        		
+        <config default="true" name="DefaultCGLoop" category="opl">
+            			
+            <ref name="projekt-artykul-colgen.mod" type="model">
+			</ref>
+            			
+            <ref name="dane-artykul.dat" type="data">
+			</ref>
+            		
+        </config>
+        	
+    </configs>
+    	
+
+</project>
