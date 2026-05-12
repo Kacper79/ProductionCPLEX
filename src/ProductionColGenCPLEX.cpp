@@ -26,7 +26,7 @@ struct Instance {
 
     std::vector<double> y0;   // initial serviceable inventory
     std::vector<double> yr0;  // initial recoverable inventory
-    bool useValidIneq = false; // enable valid inequalities
+    bool useValidIneq = true; // enable valid inequalities
 };
 
 struct Schedule {
@@ -64,6 +64,7 @@ double max2(double a, double b) { return (a > b) ? a : b; }
 double min2(double a, double b) { return (a < b) ? a : b; }
 
 Instance buildReferenceInstance() {
+
     Instance ins;
 
     ins.K = 4;
@@ -127,7 +128,7 @@ std::vector<std::vector<double>> computeBigM(const Instance& ins) {
 }
 
 // Dummy schedule with high penalty cost (ensures feasibility)
-Schedule makeDummySchedule(const Instance& ins, int k, double penalty = 1.0e6) {
+Schedule makeDummySchedule(const Instance& ins, int k, double penalty = 1.0e5) {
     Schedule s;
     s.product = k;
     s.cost = penalty;
@@ -144,7 +145,7 @@ Schedule makeDummySchedule(const Instance& ins, int k, double penalty = 1.0e6) {
 }
 
 // Solves SLULSP-RM for one product to find improving column
-PricingResult solvePricingSubproblem( const Instance& ins, const std::vector<std::vector<double>>& M, int k, double sigma, const std::vector<double>& piProd, const std::vector<double>& piRem, double rcTolerance = 1e-6) {
+PricingResult solvePricingSubproblem( const Instance& ins, const std::vector<std::vector<double>>& M, int k, double sigma, const std::vector<double>& piProd, const std::vector<double>& piRem, double rcTolerance = -1e-5) {
     IloEnv env;
     PricingResult result;
 
@@ -508,19 +509,18 @@ struct ActiveColumnsFromCG {
     std::vector<std::vector<int>> activeCols;  // original column indices from pool
 };
 
-ActiveColumnsFromCG extractPositiveDeltaColumns(const Instance& datasetInstance, const MasterResult& relaxedMaster, double tol = 1e-9)
+ActiveColumnsFromCG extractPositiveDeltaColumns(const Instance& ins, const std::vector<std::vector<Schedule>>& pool, const MasterResult& relaxedMaster, double tol = 1e-9)
 {
-    ActiveColumnsFromCG active;
-    active.activeCols.resize(datasetInstance.K);
+    ActiveColumnsFromCG activeSet;
+    activeSet.activeCols.resize(ins.K);
 
-    for (int k = 0; k < datasetInstance.K; ++k) {
-        for (int n = 0; n < relaxedMaster.deltaValues[k].size(); ++n) {
-            if (relaxedMaster.deltaValues[k][n] > tol) {
-                active.activeCols[k].push_back(n);
-            }
+    for (int k = 0; k < ins.K; ++k) {
+        for (int n = 0; n < pool[k].size(); ++n) {
+            activeSet.activeCols[k].push_back(n);
         }
     }
-    return active;
+
+    return activeSet;
 }
 
 bool isIntegralRestrictedMasterSolution(const MasterResult& master, const ActiveColumnsFromCG& activeSet,double tol = 1e-9)
@@ -807,8 +807,8 @@ void restrictedBranchAndBound(const Instance& datasetInstance, const std::vector
     }
 }
 
-RestrictedBranchAndBoundResult solveRestrictedBranchAndBoundOnlyOnPositiveSupport(const Instance& datasetInstance, const std::vector<std::vector<Schedule>>& schedulesPool, const MasterResult& relaxedMasterFromCG, double tol = 1e-9){
-    ActiveColumnsFromCG activeSet = extractPositiveDeltaColumns(datasetInstance, relaxedMasterFromCG, tol);
+RestrictedBranchAndBoundResult solveBranchAndBound(const Instance& datasetInstance, const std::vector<std::vector<Schedule>>& schedulesPool, const MasterResult& relaxedMasterFromCG, double tol = 1e-9){
+    ActiveColumnsFromCG activeSet = extractPositiveDeltaColumns(datasetInstance, schedulesPool, relaxedMasterFromCG, tol);
 
     RestrictedBranchAndBoundResult result;
     std::vector<BranchConstraint> rootConstraints;
@@ -1191,8 +1191,8 @@ int main() {
         std::cout << "Upper Bound (from solving master problem over generated columns): " << integerMasterObj << "\n\n"; //?
 
         // Printing delta values
-#ifndef PRINT_SCHEDULES
-        std::cout << "========== Chosen schedules (found deltas) ==========\n";
+
+        std::cout << "========== Relaxed SPP deltas (found schedules) ==========\n";
         for (int i = 0; i < master.deltaValues.size(); i++) {
             std::cout << "\nProduct " << i + 1 << " has " << master.deltaValues[i].size() << " schedules\n";
 
@@ -1201,8 +1201,18 @@ int main() {
                 std::cout << "\tcol: " << j+1 <<  "\tdelta: " << master.deltaValues[i][j] << "\t cost: " << pool[i][j].cost << "\n";
             }
         }
-#endif
 
+        std::cout << "========== Integral deltas (found schedules) ==========\n";
+        for (int i = 0; i < chosen.size(); i++) {
+            std::cout << "\nProduct " << i + 1 << " has " << chosen[i].size() << " schedules\n";
+
+            for (int j = 0; j < chosen[i].size(); j++) {
+                //if (chosen[i][j] <= 0.001) continue;
+                std::cout << "\tcol: " << j + 1 << "\tdelta: " << chosen[i][j] << "\t cost: " << pool[i][j].cost << "\n";
+            }
+        }
+
+#ifdef PRINT_SCHEDULES
         std::cout << "\n========== Printing schedules ==========\n";
         for (int i = 0; i < pool.size(); i++) {
             for (int j = 0; j < pool[i].size(); j++) {
@@ -1210,10 +1220,10 @@ int main() {
                 printScheduleBrief(pool[i][j]);
             }
         }
-
-#ifndef BRANCHING
+#endif
+#ifdef BRANCHING
         std::cout << "\n========== B&B only on >0 deltas from CG ==========\n";
-        RestrictedBranchAndBoundResult restrictedBB = solveRestrictedBranchAndBoundOnlyOnPositiveSupport(ins, pool, master);
+        RestrictedBranchAndBoundResult restrictedBB = solveBranchAndBound(ins, pool, master);
 
         if (!restrictedBB.foundFeasible) {
             std::cout << "  No feasible integral SPP solution exists on this positive-delta support.\n";

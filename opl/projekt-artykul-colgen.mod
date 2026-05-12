@@ -384,7 +384,10 @@ main {
   writeln();
   writeln("Final CG lower bound from dual RMP = ", masterObj);
   writeln("Final columns per product:");
-  for (var k = 1; k <= K; k++) writeln("  Product ", k, ": ", N[k], " columns");
+  for (var k = 1; k <= K; k++){
+    writeln("  Product ", k, ": ", N[k], " columns");
+  }
+   
 
   dualDef.end();
   primalDef.end();

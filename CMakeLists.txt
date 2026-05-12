@@ -14,7 +14,7 @@ set(CMAKE_CXX_STANDARD 20)
 
 add_executable (ProductionCPLEX "src/ProductionColGenCPLEX.cpp") #   "src/ProductionBaseCPLEX.cpp"  "src/ProductionColGenCPLEX.cpp" "src/ProductionColGenFixCPLEX.cpp"
 
-set(CPLEX_ROOT_PATH "E:/CPLEX")
+set(CPLEX_ROOT_PATH "C:/Program Files/IBM/ILOG/CPLEX_Studio2211")
 
 target_include_directories(ProductionCPLEX PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_include_directories(ProductionCPLEX PUBLIC "${CPLEX_ROOT_PATH}/concert/include")
@@ -23,6 +23,6 @@ target_include_directories(ProductionCPLEX PUBLIC "${CPLEX_ROOT_PATH}/cplex/incl
 target_link_directories(ProductionCPLEX PUBLIC "${CPLEX_ROOT_PATH}/concert/lib/x64_windows_msvc14/stat_mdd")
 target_link_directories(ProductionCPLEX PUBLIC "${CPLEX_ROOT_PATH}/cplex/lib/x64_windows_msvc14/stat_mdd")
 
-target_link_libraries(ProductionCPLEX PUBLIC concert cplex2212 ilocplex)
+target_link_libraries(ProductionCPLEX PUBLIC concert cplex2211 ilocplex)
 
 
